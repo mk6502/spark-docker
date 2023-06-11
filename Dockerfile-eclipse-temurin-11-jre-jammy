@@ -1,0 +1,31 @@
+FROM eclipse-temurin:11-jre-jammy
+
+ARG SPARK_VERSION 3.4.0
+ARG HADOOP_VERSION 3.3.4
+
+ENV OPENBLAS_NUM_THREADS 1
+ENV PATH /opt/spark/bin:/opt/java/openjdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV SPARK_HOME /opt/spark
+
+RUN set -ex && \
+    apt-get update && \
+    apt-get install -qq bash krb5-user libc6 libnss3 libopenblas-dev libpam-modules net-tools procps tini wget && \
+    wget --progress=bar:force:noscroll -O /opt/spark.tgz https://archive.apache.org/dist/spark/spark-$SPARK_VERSION/spark-$SPARK_VERSION-bin-hadoop3.tgz && \
+    tar -xf /opt/spark.tgz -C /opt/ && \
+    rm -f /opt/spark.tgz && \
+    mv /opt/spark-$SPARK_VERSION-bin-hadoop3 /opt/spark && \
+    cp /opt/spark/kubernetes/dockerfiles/spark/decom.sh /opt/ && \
+    cp /opt/spark/kubernetes/dockerfiles/spark/entrypoint.sh /opt/ && \
+    chmod a+x /opt/decom.sh && \
+    wget -q -O /opt/spark/jars/aws-java-sdk-bundle-1.12.485.jar https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.485/aws-java-sdk-bundle-1.12.485.jar && \
+    wget -q -O /opt/spark/jars/hadoop-aws-$HADOOP_VERSION.jar https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/$HADOOP_VERSION/hadoop-aws-$HADOOP_VERSION.jar && \
+    wget -q -O /opt/spark/jars/spark-hadoop-cloud_2.12-$SPARK_VERSION.jar https://repo1.maven.org/maven2/org/apache/spark/spark-hadoop-cloud_2.12/$SPARK_VERSION/spark-hadoop-cloud_2.12-$SPARK_VERSION.jar && \
+    cp /opt/spark/conf/log4j2.properties.template /opt/spark/conf/log4j2.properties && \
+    sed -i 's/rootLogger.level = info/rootLogger.level = warn/g' /opt/spark/conf/log4j2.properties && \
+    echo "auth required pam_wheel.so use_uid" >> /etc/pam.d/su && \
+    chgrp root /etc/passwd && \
+    chmod ug+rw /etc/passwd && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/spark
+ENTRYPOINT ["/opt/entrypoint.sh"]

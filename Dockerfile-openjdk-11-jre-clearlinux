@@ -1,0 +1,49 @@
+FROM clearlinux:latest AS builder
+
+ARG swupd_args
+
+RUN swupd update --no-boot-update $swupd_args
+COPY --from=clearlinux/os-core:latest /usr/lib/os-release /
+
+RUN source /os-release && \
+    mkdir /install_root && \
+    swupd os-install -V ${VERSION_ID} \
+    --path /install_root --statedir /swupd-state \
+    --bundles=os-core-update,java11-basic,net-tools,openblas,procps-ng,wget --no-boot-update
+
+RUN mkdir /os_core_install
+COPY --from=clearlinux/os-core:latest / /os_core_install/
+RUN set -ex && \
+    cd / && \
+    find os_core_install | sed -e 's/os_core_install/install_root/' | xargs rm -d &> /dev/null || true
+
+FROM clearlinux/os-core:latest
+
+ARG SPARK_VERSION 3.4.0
+ARG HADOOP_VERSION 3.3.4
+
+COPY --from=builder /install_root /
+
+ENV JAVA_HOME=/usr/lib/jvm/java-1.11.0-openjdk
+ENV PATH=/opt/spark/bin:/usr/lib/jvm/java-1.11.0-openjdk/bin:$PATH
+ENV SPARK_HOME=/opt/spark
+
+RUN set -ex && \
+    wget -O /usr/bin/tini https://github.com/krallin/tini/releases/download/v0.19.0/tini && \
+    chmod +x /usr/bin/tini && \
+    mkdir -p /opt && \
+    wget --progress=bar:force:noscroll -O /opt/spark.tgz https://archive.apache.org/dist/spark/spark-$SPARK_VERSION/spark-$SPARK_VERSION-bin-hadoop3.tgz && \
+    tar -xf /opt/spark.tgz -C /opt/ && \
+    rm -f /opt/spark.tgz && \
+    mv /opt/spark-$SPARK_VERSION-bin-hadoop3 /opt/spark && \
+    cp /opt/spark/kubernetes/dockerfiles/spark/decom.sh /opt/ && \
+    cp /opt/spark/kubernetes/dockerfiles/spark/entrypoint.sh /opt/ && \
+    chmod a+x /opt/decom.sh && \
+    cp /opt/spark/conf/log4j2.properties.template /opt/spark/conf/log4j2.properties && \
+    sed -i 's/rootLogger.level = info/rootLogger.level = warn/g' /opt/spark/conf/log4j2.properties && \
+    wget -q -O /opt/spark/jars/aws-java-sdk-bundle-1.12.485.jar https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.485/aws-java-sdk-bundle-1.12.485.jar && \
+    wget -q -O /opt/spark/jars/hadoop-aws-$HADOOP_VERSION.jar https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/$HADOOP_VERSION/hadoop-aws-$HADOOP_VERSION.jar && \
+    wget -q -O /opt/spark/jars/spark-hadoop-cloud_2.12-$SPARK_VERSION.jar https://repo1.maven.org/maven2/org/apache/spark/spark-hadoop-cloud_2.12/$SPARK_VERSION/spark-hadoop-cloud_2.12-$SPARK_VERSION.jar
+
+WORKDIR /opt/spark
+ENTRYPOINT ["/opt/entrypoint.sh"]
